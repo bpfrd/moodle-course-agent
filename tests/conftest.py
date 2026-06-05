@@ -28,6 +28,7 @@ collect_ignore = [
     "test_pages.py",
     "test_urls.py",
     "test_assigns.py",
+    "test_forums.py",
 ]
 
 

@@ -38,3 +38,7 @@ Thumbs.db
 *.egg-info/
 dist/
 build/
+
+# FFHS local workspace (course drafts, Cursor prompts — do not push)
+local/
+

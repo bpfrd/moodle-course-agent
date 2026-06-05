@@ -60,6 +60,90 @@ def test_get_label_unknown_cmid_returns_error(fake_client):
     assert out["error_type"] == "MoodleAPIError"
 
 
+def test_get_forum_returns_body(fake_client):
+    created = fake_client.create_forum(
+        sectionnum=1,
+        name="Peer forum",
+        intro="<p>Discuss here.</p>",
+        type="general",
+    )
+    out = TOOLS["get_forum"].handler(fake_client, {"cmid": created["cmid"]})
+    assert out["ok"] is True
+    assert out["result"]["intro"] == "<p>Discuss here.</p>"
+    assert out["result"]["type"] == "general"
+
+
+def test_get_forum_wrong_type_returns_error(fake_client):
+    out = TOOLS["get_forum"].handler(fake_client, {"cmid": 100})
+    assert out["ok"] is False
+    assert "forum" in out["error"]
+
+
+def test_find_sections_exact(fake_client):
+    out = TOOLS["find_sections"].handler(
+        fake_client,
+        {"section_name": "Week 1", "exact": True},
+    )
+    assert out["ok"] is True
+    assert len(out["result"]) == 1
+    assert out["result"][0]["sectionnum"] == 1
+    assert out["result"][0]["name"] == "Week 1"
+
+
+def test_find_sections_substring(fake_client):
+    out = TOOLS["find_sections"].handler(
+        fake_client,
+        {"section_name": "Week", "exact": False},
+    )
+    assert out["ok"] is True
+    assert out["result"][0]["name"] == "Week 1"
+
+
+def test_find_modules_by_modname(fake_client):
+    out = TOOLS["find_modules"].handler(
+        fake_client,
+        {"modname": "assign"},
+    )
+    assert out["ok"] is True
+    cmids = {m["cmid"] for m in out["result"]}
+    assert cmids == {102}
+
+
+def test_find_modules_by_name_contains(fake_client):
+    out = TOOLS["find_modules"].handler(
+        fake_client,
+        {"name_contains": "Syllabus"},
+    )
+    assert out["ok"] is True
+    assert len(out["result"]) == 1
+    assert out["result"][0]["cmid"] == 101
+    assert out["result"][0]["modname"] == "page"
+
+
+def test_get_module_from_cache(fake_client):
+    out = TOOLS["get_module_from_cache"].handler(fake_client, {"cmid": 100})
+    assert out["ok"] is True
+    assert out["result"]["cmid"] == 100
+    assert out["result"]["modname"] == "label"
+    assert out["result"]["sectionnum"] == 0
+
+
+def test_get_module_from_cache_unknown(fake_client):
+    out = TOOLS["get_module_from_cache"].handler(fake_client, {"cmid": 99999})
+    assert out["ok"] is False
+    assert out["error_type"] == "ValueError"
+
+
+def test_find_modules_by_cmid_overrides_filters(fake_client):
+    out = TOOLS["find_modules"].handler(
+        fake_client,
+        {"cmid": 100, "modname": "assign", "name_contains": "Homework"},
+    )
+    assert out["ok"] is True
+    assert len(out["result"]) == 1
+    assert out["result"][0]["cmid"] == 100
+
+
 # ---------------------------------------------------------------------------
 # Section writes
 # ---------------------------------------------------------------------------
@@ -153,6 +237,57 @@ def test_create_page(fake_client):
     )
     assert out["ok"] is True
     assert fake_client.course[0]["modules"][-1]["modname"] == "page"
+
+
+def test_create_forum(fake_client):
+    out = TOOLS["create_forum"].handler(
+        fake_client,
+        {
+            "sectionnum": 1,
+            "name": "Peer forum",
+            "intro": "<p>Post your idea here.</p>",
+            "type": "general",
+        },
+    )
+    assert out["ok"] is True
+    assert out["result"]["cmid"] >= 103
+    assert fake_client.calls[-1]["method"] == "create_forum"
+
+
+def test_create_forum_rejects_invalid_type(fake_client):
+    out = TOOLS["create_forum"].handler(
+        fake_client,
+        {
+            "sectionnum": 1,
+            "name": "Bad forum",
+            "intro": "<p>x</p>",
+            "type": "invalid",
+        },
+    )
+    assert out["ok"] is False
+
+
+def test_update_forum(fake_client):
+    created = fake_client.create_forum(
+        sectionnum=1,
+        name="Peer forum",
+        intro="<p>Original</p>",
+        type="general",
+    )
+    cmid = created["cmid"]
+    out = TOOLS["update_forum"].handler(
+        fake_client,
+        {
+            "cmid": cmid,
+            "name": "Peer forum (updated)",
+            "intro": "<p>Updated intro</p>",
+            "type": "general",
+        },
+    )
+    assert out["ok"] is True
+    fetched = fake_client.get_forum(cmid)
+    assert fetched["name"] == "Peer forum (updated)"
+    assert fetched["intro"] == "<p>Updated intro</p>"
 
 
 def test_create_url(fake_client):

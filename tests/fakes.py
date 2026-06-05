@@ -107,6 +107,9 @@ class FakeMoodleClient:
     def get_assign(self, cmid: int) -> dict[str, Any]:
         return self._typed_get(cmid, "assign")
 
+    def get_forum(self, cmid: int) -> dict[str, Any]:
+        return self._typed_get(cmid, "forum")
+
     # --- section writes -----------------------------------------------------
 
     def create_section(
@@ -314,6 +317,98 @@ class FakeMoodleClient:
             "showdescription": showdescription,
         }
         return {"cmid": cmid}
+
+    # --- forum writes -------------------------------------------------------
+
+    def create_forum(
+        self,
+        sectionnum: int,
+        name: str,
+        intro: str,
+        visible: int = 1,
+        visibleoncoursepage: int = 1,
+        showdescription: int = 0,
+        beforemod: int | None = None,
+        type: str = "general",
+        showimmediately: int = 0,
+        duedate: int = 0,
+        cutoffdate: int = 0,
+        maxbytes: int = 0,
+        maxattachments: int = 1,
+        displaywordcount: int = 0,
+        forcesubscribe: int = 0,
+        trackingtype: int = 1,
+        lockdiscussionafter: int = 0,
+        blockperiod: int = 0,
+        blockafter: int = 0,
+        warnafter: int = 0,
+    ) -> dict[str, Any]:
+        self._record("create_forum", sectionnum=sectionnum, name=name)
+        if sectionnum not in self._section_numbers():
+            raise ValueError(f"Invalid section number {sectionnum}")
+        allowed = {"single", "eachuser", "qanda", "blog", "general"}
+        if type not in allowed:
+            raise ValueError(f"Invalid forum type {type!r}")
+        return self._insert_module(
+            sectionnum=sectionnum,
+            beforemod=beforemod,
+            modname="forum",
+            name=name,
+            visible=visible,
+            visibleoncoursepage=visibleoncoursepage,
+            body={
+                "intro": intro,
+                "type": type,
+                "showdescription": showdescription,
+                "duedate": duedate,
+                "cutoffdate": cutoffdate,
+            },
+        )
+
+    def update_forum(
+        self,
+        cmid: int,
+        name: str,
+        intro: str,
+        visible: int = 1,
+        visibleoncoursepage: int = 1,
+        showdescription: int = 0,
+        type: str = "general",
+        showimmediately: int = 0,
+        duedate: int = 0,
+        cutoffdate: int = 0,
+        maxbytes: int = 0,
+        maxattachments: int = 1,
+        displaywordcount: int = 0,
+        forcesubscribe: int = 0,
+        trackingtype: int = 1,
+        lockdiscussionafter: int = 0,
+        blockperiod: int = 0,
+        blockafter: int = 0,
+        warnafter: int = 0,
+    ) -> dict[str, Any]:
+        self._record("update_forum", cmid=cmid)
+        self._require_cmid(cmid)
+        module = self._find_module(cmid)
+        assert module is not None
+        if module.get("modname") != "forum":
+            raise MoodleAPIError(f"moodle_exception: cmid {cmid} is not a forum")
+        allowed = {"single", "eachuser", "qanda", "blog", "general"}
+        if type not in allowed:
+            raise ValueError(f"Invalid forum type {type!r}")
+        module["name"] = name
+        module["visible"] = visible
+        module["visibleoncoursepage"] = visibleoncoursepage
+        self._module_bodies[cmid] = {
+            "intro": intro,
+            "type": type,
+            "showdescription": showdescription,
+            "duedate": duedate,
+            "cutoffdate": cutoffdate,
+            "forcesubscribe": forcesubscribe,
+            "trackingtype": trackingtype,
+        }
+        return {"cmid": cmid, "message": "ok"}
 
     # --- assign writes ------------------------------------------------------
 

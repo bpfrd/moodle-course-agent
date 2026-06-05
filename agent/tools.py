@@ -15,9 +15,11 @@ The registry is exposed through ``TOOLS`` (name -> Tool) and ``openai_schemas()`
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
+
+FORUM_TYPES = Literal["single", "eachuser", "qanda", "blog", "general"]
 
 from moodle_client import MoodleAPIError, MoodleClient
 from template_assignments import (
@@ -40,6 +42,34 @@ class _NoArgs(BaseModel):
 
 class GetModuleArgs(BaseModel):
     cmid: int = Field(..., description="Course module id from get_course_structure")
+
+
+class FindSectionArgs(BaseModel):
+    section_name: str = Field(..., description="Exact name of the section as shown in the course summary")
+    exact: bool = Field(True, description="If true, match section_name exactly; otherwise use substring match")
+
+
+class FindModulesArgs(BaseModel):
+    section_name: Optional[str] = Field(
+        None,
+        description="Optional section name to limit the search (as shown in the course summary).",
+    )
+    modname: Optional[str] = Field(
+        None,
+        description="Optional Moodle module name, e.g. 'assign', 'page', 'label', 'url', 'forum'.",
+    )
+    name_contains: Optional[str] = Field(
+        None,
+        description="Optional substring match against the module display name.",
+    )
+    cmid: Optional[int] = Field(
+        None,
+        description="Optional cmid to find a single module. If provided, other filters are ignored.",
+    )
+
+
+class GetModuleFromCacheArgs(BaseModel):
+    cmid: int = Field(..., description="Course module id to locate in the cached course structure")
 
 
 class CreateSectionArgs(BaseModel):
@@ -138,6 +168,69 @@ class UpdateUrlArgs(BaseModel):
     visible: int = 1
     visibleoncoursepage: int = 1
     showdescription: int = 0
+
+
+class CreateForumArgs(BaseModel):
+    sectionnum: int
+    name: str
+    intro: str = Field(..., description="HTML intro/description for the forum")
+    visible: int = 1
+    visibleoncoursepage: int = 1
+    showdescription: int = 0
+    beforemod: Optional[int] = None
+    type: FORUM_TYPES = Field(
+        "general",
+        description=(
+            "Forum type: single, eachuser, qanda, blog, or general "
+            "(open discussion — default for peer forums)"
+        ),
+    )
+    showimmediately: int = 0
+    duedate: int = Field(0, description="Unix timestamp; 0 means no due date")
+    cutoffdate: int = Field(0, description="Unix timestamp; 0 means no cutoff")
+    maxbytes: int = 0
+    maxattachments: int = 1
+    displaywordcount: int = 0
+    forcesubscribe: int = Field(
+        0,
+        description="0=optional, 1=forced, 2=auto, 3=disabled subscription",
+    )
+    trackingtype: int = Field(1, description="0=off, 1=optional read tracking")
+    lockdiscussionafter: int = 0
+    blockperiod: int = 0
+    blockafter: int = 0
+    warnafter: int = 0
+
+
+class UpdateForumArgs(BaseModel):
+    cmid: int
+    name: str
+    intro: str = Field(..., description="HTML intro/description for the forum")
+    visible: int = 1
+    visibleoncoursepage: int = 1
+    showdescription: int = 0
+    type: FORUM_TYPES = Field(
+        "general",
+        description=(
+            "Forum type: single, eachuser, qanda, blog, or general "
+            "(open discussion — default for peer forums)"
+        ),
+    )
+    showimmediately: int = 0
+    duedate: int = Field(0, description="Unix timestamp; 0 means no due date")
+    cutoffdate: int = Field(0, description="Unix timestamp; 0 means no cutoff")
+    maxbytes: int = 0
+    maxattachments: int = 1
+    displaywordcount: int = 0
+    forcesubscribe: int = Field(
+        0,
+        description="0=optional, 1=forced, 2=auto, 3=disabled subscription",
+    )
+    trackingtype: int = Field(1, description="0=off, 1=optional read tracking")
+    lockdiscussionafter: int = 0
+    blockperiod: int = 0
+    blockafter: int = 0
+    warnafter: int = 0
 
 
 class CreateAssignArgs(BaseModel):
@@ -317,6 +410,93 @@ def _h_get_assign(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
     return _run(GetModuleArgs, args, lambda a: client.get_assign(a.cmid))
 
 
+def _h_get_forum(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    return _run(GetModuleArgs, args, lambda a: client.get_forum(a.cmid))
+
+
+def _h_find_sections(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    def fn() -> Any:
+        a = FindSectionArgs(**args)
+        matches = []
+        for s in client.course:
+            s_name = s.get("name")
+            ok = (
+                s_name == a.section_name
+                if a.exact
+                else (a.section_name.lower() in (s_name or "").lower())
+            )
+            if not ok:
+                continue
+            matches.append(
+                {
+                    "sectionnum": s.get("section"),
+                    "name": s.get("name"),
+                    "visible": s.get("visible", 1),
+                    "modules_count": len(s.get("modules", [])),
+                }
+            )
+        return matches
+
+    return _safe_call(fn)
+
+
+def _h_find_modules(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    def fn() -> Any:
+        a = FindModulesArgs(**args)
+        modules = []
+        for s in client.course:
+            s_name = s.get("name")
+            if (
+                a.section_name is not None
+                and (s_name or "").lower() != a.section_name.lower()
+            ):
+                continue
+            sectionnum = s.get("section")
+            for m in s.get("modules", []):
+                if a.cmid is not None:
+                    if m.get("id") != a.cmid:
+                        continue
+                else:
+                    if a.modname is not None and m.get("modname") != a.modname:
+                        continue
+                    if a.name_contains is not None:
+                        if a.name_contains.lower() not in (m.get("name") or "").lower():
+                            continue
+
+                modules.append(
+                    {
+                        "cmid": m.get("id"),
+                        "modname": m.get("modname"),
+                        "name": m.get("name"),
+                        "visible": m.get("visible", 1),
+                        "visibleoncoursepage": m.get("visibleoncoursepage", 1),
+                        "sectionnum": sectionnum,
+                    }
+                )
+        return modules
+
+    return _safe_call(fn)
+
+
+def _h_get_module_from_cache(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    def fn() -> Any:
+        a = GetModuleFromCacheArgs(**args)
+        for s in client.course:
+            for m in s.get("modules", []):
+                if m.get("id") == a.cmid:
+                    return {
+                        "cmid": m.get("id"),
+                        "modname": m.get("modname"),
+                        "name": m.get("name"),
+                        "visible": m.get("visible", 1),
+                        "visibleoncoursepage": m.get("visibleoncoursepage", 1),
+                        "sectionnum": s.get("section"),
+                    }
+        raise ValueError(f"Module cmid not found in cached course structure: {a.cmid}")
+
+    return _safe_call(fn)
+
+
 def _h_create_section(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
     return _run(
         CreateSectionArgs,
@@ -424,6 +604,63 @@ def _h_create_url(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
             visibleoncoursepage=a.visibleoncoursepage,
             showdescription=a.showdescription,
             beforemod=a.beforemod,
+        ),
+    )
+
+
+def _h_update_forum(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    return _run(
+        UpdateForumArgs,
+        args,
+        lambda a: client.update_forum(
+            cmid=a.cmid,
+            name=a.name,
+            intro=a.intro,
+            visible=a.visible,
+            visibleoncoursepage=a.visibleoncoursepage,
+            showdescription=a.showdescription,
+            type=a.type,
+            showimmediately=a.showimmediately,
+            duedate=a.duedate,
+            cutoffdate=a.cutoffdate,
+            maxbytes=a.maxbytes,
+            maxattachments=a.maxattachments,
+            displaywordcount=a.displaywordcount,
+            forcesubscribe=a.forcesubscribe,
+            trackingtype=a.trackingtype,
+            lockdiscussionafter=a.lockdiscussionafter,
+            blockperiod=a.blockperiod,
+            blockafter=a.blockafter,
+            warnafter=a.warnafter,
+        ),
+    )
+
+
+def _h_create_forum(client: MoodleClient, args: dict[str, Any]) -> dict[str, Any]:
+    return _run(
+        CreateForumArgs,
+        args,
+        lambda a: client.create_forum(
+            sectionnum=a.sectionnum,
+            name=a.name,
+            intro=a.intro,
+            visible=a.visible,
+            visibleoncoursepage=a.visibleoncoursepage,
+            showdescription=a.showdescription,
+            beforemod=a.beforemod,
+            type=a.type,
+            showimmediately=a.showimmediately,
+            duedate=a.duedate,
+            cutoffdate=a.cutoffdate,
+            maxbytes=a.maxbytes,
+            maxattachments=a.maxattachments,
+            displaywordcount=a.displaywordcount,
+            forcesubscribe=a.forcesubscribe,
+            trackingtype=a.trackingtype,
+            lockdiscussionafter=a.lockdiscussionafter,
+            blockperiod=a.blockperiod,
+            blockafter=a.blockafter,
+            warnafter=a.warnafter,
         ),
     )
 
@@ -594,7 +831,7 @@ TOOLS: dict[str, Tool] = {
             description=(
                 "Return raw Moodle data for a single course module by cmid. "
                 "Use this for diagnostic info; prefer get_label/get_page/"
-                "get_url/get_assign when you know the module type."
+                "get_url/get_forum/get_assign when you know the module type."
             ),
             args_model=GetModuleArgs,
             handler=_h_get_module,
@@ -626,6 +863,44 @@ TOOLS: dict[str, Tool] = {
             description="Return the full content of an assignment by cmid.",
             args_model=GetModuleArgs,
             handler=_h_get_assign,
+            write=False,
+        ),
+        Tool(
+            name="get_forum",
+            description="Return the full content of a forum by cmid.",
+            args_model=GetModuleArgs,
+            handler=_h_get_forum,
+            write=False,
+        ),
+        Tool(
+            name="find_sections",
+            description=(
+                "Find sections in the cached course structure by name. "
+                "Returns matching section summaries (sectionnum, name, visibility, modules_count)."
+            ),
+            args_model=FindSectionArgs,
+            handler=_h_find_sections,
+            write=False,
+        ),
+        Tool(
+            name="find_modules",
+            description=(
+                "Find modules in the cached course structure by filters such as section_name, modname, "
+                "name_contains, or cmid. Returns matching modules with their cmid, modname, name, visibility, "
+                "and sectionnum."
+            ),
+            args_model=FindModulesArgs,
+            handler=_h_find_modules,
+            write=False,
+        ),
+        Tool(
+            name="get_module_from_cache",
+            description=(
+                "Get a single module's summary (cmid/modname/name/visibility/sectionnum) from the cached course "
+                "structure without calling Moodle WS."
+            ),
+            args_model=GetModuleFromCacheArgs,
+            handler=_h_get_module_from_cache,
             write=False,
         ),
         # Section writes ---------------------------------------------------
@@ -700,6 +975,24 @@ TOOLS: dict[str, Tool] = {
             description="Update an existing URL resource by cmid.",
             args_model=UpdateUrlArgs,
             handler=_h_update_url,
+            write=True,
+        ),
+        # Forum writes -----------------------------------------------------
+        Tool(
+            name="create_forum",
+            description=(
+                "Create a forum inside a section. Use type 'general' for open "
+                "peer discussions. Dates are Unix timestamps (0 = no restriction)."
+            ),
+            args_model=CreateForumArgs,
+            handler=_h_create_forum,
+            write=True,
+        ),
+        Tool(
+            name="update_forum",
+            description="Update an existing forum by cmid.",
+            args_model=UpdateForumArgs,
+            handler=_h_update_forum,
             write=True,
         ),
         # Assign writes ----------------------------------------------------

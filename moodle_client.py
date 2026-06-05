@@ -203,6 +203,16 @@ class MoodleClient:
             cmid=cmid
         )
 
+    def get_forum(
+        self,
+        cmid: int,
+    ):
+        return self.call(
+            "local_ffhs_course_editing_get_forum",
+            courseid=self.courseid,
+            cmid=cmid,
+        )
+
     @mutate
     def create_label(
         self,
@@ -275,6 +285,130 @@ class MoodleClient:
         )
         
         return created_page
+
+    @mutate
+    def create_forum(
+        self,
+        sectionnum: int,
+        name: str,
+        intro: str,
+        visible: int = 1,
+        visibleoncoursepage: int = 1,
+        showdescription: int = 0,
+        beforemod: Optional[int] = None,
+        type: str = "general",
+        showimmediately: int = 0,
+        duedate: int = 0,
+        cutoffdate: int = 0,
+        maxbytes: int = 0,
+        maxattachments: int = 1,
+        displaywordcount: int = 0,
+        forcesubscribe: int = 0,
+        trackingtype: int = 1,
+        lockdiscussionafter: int = 0,
+        blockperiod: int = 0,
+        blockafter: int = 0,
+        warnafter: int = 0,
+    ):
+        section_numbers = {s["section"] for s in self.course}
+        if sectionnum not in section_numbers:
+            raise ValueError(f"Invalid section number {sectionnum}")
+
+        allowed_types = {"single", "eachuser", "qanda", "blog", "general"}
+        if type not in allowed_types:
+            raise ValueError(
+                f"Invalid forum type {type!r}. "
+                f"Allowed: {', '.join(sorted(allowed_types))}"
+            )
+
+        payload = {
+            "courseid": self.courseid,
+            "sectionnum": sectionnum,
+            "name": name,
+            "intro": intro,
+            "visible": visible,
+            "visibleoncoursepage": visibleoncoursepage,
+            "showdescription": showdescription,
+            "type": type,
+            "showimmediately": showimmediately,
+            "duedate": duedate,
+            "cutoffdate": cutoffdate,
+            "maxbytes": maxbytes,
+            "maxattachments": maxattachments,
+            "displaywordcount": displaywordcount,
+            "forcesubscribe": forcesubscribe,
+            "trackingtype": trackingtype,
+            "lockdiscussionafter": lockdiscussionafter,
+            "blockperiod": blockperiod,
+            "blockafter": blockafter,
+            "warnafter": warnafter,
+        }
+
+        if beforemod:
+            payload["beforemod"] = beforemod
+
+        return self.call(
+            "local_ffhs_course_editing_create_forum",
+            **payload,
+        )
+
+    @mutate
+    def update_forum(
+        self,
+        cmid: int,
+        name: str,
+        intro: str,
+        visible: int = 1,
+        visibleoncoursepage: int = 1,
+        showdescription: int = 0,
+        type: str = "general",
+        showimmediately: int = 0,
+        duedate: int = 0,
+        cutoffdate: int = 0,
+        maxbytes: int = 0,
+        maxattachments: int = 1,
+        displaywordcount: int = 0,
+        forcesubscribe: int = 0,
+        trackingtype: int = 1,
+        lockdiscussionafter: int = 0,
+        blockperiod: int = 0,
+        blockafter: int = 0,
+        warnafter: int = 0,
+    ):
+        cmids = {m["id"] for s in self.course for m in s.get("modules", [])}
+        if cmid not in cmids:
+            raise ValueError(f"Invalid cmid {cmid}")
+
+        allowed_types = {"single", "eachuser", "qanda", "blog", "general"}
+        if type not in allowed_types:
+            raise ValueError(
+                f"Invalid forum type {type!r}. "
+                f"Allowed: {', '.join(sorted(allowed_types))}"
+            )
+
+        return self.call(
+            "local_ffhs_course_editing_update_forum",
+            courseid=self.courseid,
+            cmid=cmid,
+            name=name,
+            intro=intro,
+            visible=visible,
+            visibleoncoursepage=visibleoncoursepage,
+            showdescription=showdescription,
+            type=type,
+            showimmediately=showimmediately,
+            duedate=duedate,
+            cutoffdate=cutoffdate,
+            maxbytes=maxbytes,
+            maxattachments=maxattachments,
+            displaywordcount=displaywordcount,
+            forcesubscribe=forcesubscribe,
+            trackingtype=trackingtype,
+            lockdiscussionafter=lockdiscussionafter,
+            blockperiod=blockperiod,
+            blockafter=blockafter,
+            warnafter=warnafter,
+        )
 
     @mutate
     def create_url(

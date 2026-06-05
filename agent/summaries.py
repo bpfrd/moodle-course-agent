@@ -3,7 +3,7 @@
 The raw output of ``core_course_get_contents`` is large and noisy. The LLM only
 needs the minimum information required to choose the next tool call: section
 numbers, module ids, names, and module types. Full bodies are fetched on demand
-via the ``get_label``/``get_page``/``get_url``/``get_assign`` tools.
+via the ``get_label``/``get_page``/``get_url``/``get_forum``/``get_assign`` tools.
 """
 
 from __future__ import annotations
