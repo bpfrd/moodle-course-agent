@@ -1,6 +1,8 @@
 # Moodle Course Agent
 
 [![CI](https://github.com/bpfrd/moodle-course-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/bpfrd/moodle-course-agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/bpfrd/moodle-course-agent)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/downloads/)
 
 A Moodle course-editing API and tool layer for AI agents. The REST client and `agent/tools.py` definitions let an agent inspect a course, plan changes, and apply them through Moodle webservices.
 
@@ -112,3 +114,7 @@ agent/
 prompts/system.md         CLI agent system prompt
 tests/
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
