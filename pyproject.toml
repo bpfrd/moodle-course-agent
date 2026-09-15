@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moodle-course-agent"
+version = "0.3.0"
+description = "Shell-first Moodle course agent: local Markdown workspace, HITL sync, MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Behnam Parsaeifard" }]
+dependencies = [
+  "requests>=2.31.0",
+  "python-dotenv>=1.0.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.2.0",
+  "openai>=1.50.0",
+  "strands-agents[otel]>=1.0.0",
+  "rich>=13.7.0",
+  "pyyaml>=6.0.1",
+  "markdown>=3.6",
+  "markdownify>=0.13.1",
+  "mcp>=1.2.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+]
+
+[project.scripts]
+moodle-agent = "moodle_course_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]

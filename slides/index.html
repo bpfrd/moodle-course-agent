@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Moodle Course Agent — overview</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --ink: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #34d399;
+      --warn: #fbbf24;
+      --line: #334155;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif; }
+    .deck { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
+    h1 { font-size: 1.7rem; margin: 0 0 8px; }
+    p.lead { color: var(--muted); margin: 0 0 28px; }
+    .slide {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 28px 32px 32px;
+      margin-bottom: 28px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    }
+    .slide h2 { margin: 0 0 6px; font-size: 1.35rem; color: var(--accent); }
+    .slide .kicker { color: var(--muted); font-size: .85rem; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 18px; }
+    .mermaid { background: #0b1220; border-radius: 12px; padding: 12px; }
+    .roles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .role {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .role h3 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      color: var(--ok);
+    }
+    .role p { margin: 0; color: var(--muted); font-size: .92rem; line-height: 1.4; }
+    .role.wide { grid-column: 1 / -1; }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <h1>Moodle Course Agent</h1>
+    <p class="lead">Overview of the agent, its parts, and a typical teaching session.</p>
+
+    <section class="slide">
+      <div class="kicker">Slide 1 · Components</div>
+      <h2>What talks to what</h2>
+      <div class="mermaid">
+flowchart LR
+  T[Teacher] --> S[Rich shell]
+  S --> A[Strands agent]
+  A --> G[LLM guardrail]
+  A --> H[HITL approval]
+  A --> K[Skills]
+  A --> TL[Tools]
+  TL --> APP[CourseApplication]
+  MCP[MCP server] --> APP
+  APP --> M[Moodle client]
+  APP --> W[Markdown workspace]
+  APP --> SY[Hash sync]
+  A --> OTEL[OpenTelemetry]
+  OTEL --> LF[Langfuse localhost]
+  M --> MO[Moodle]
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Slide 2 · Lifecycle</div>
+      <h2>A teaching turn, from message to files</h2>
+      <div class="mermaid">
+flowchart TD
+  IN[Teacher message] --> GR{LLM classifier}
+  GR -->|deny| STOP[Sorry, I can not help with this.]
+  GR -->|allow| MODEL[Model + skills]
+  MODEL --> TOOL{Tool?}
+  TOOL -->|local workspace| WS[Write Markdown/YAML]
+  TOOL -->|Moodle write| HITL{Teacher y / n}
+  HITL -->|n| BACK[Adjust plan]
+  HITL -->|y| REM[Moodle API]
+  REM --> PULL[Refresh workspace from Moodle]
+  TOOL -->|sync to Moodle| HITL
+  TOOL -->|sync to local| WS
+  WS --> OUT[Reply in shell]
+  PULL --> OUT
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="kicker">Slide 3 · Roles</div>
+      <h2>What each piece does</h2>
+      <div class="roles">
+        <article class="role">
+          <h3>Guardrail</h3>
+          <p>Classifies each teacher message. Off-topic, sexual, hate, or violence is refused. Course content itself is not filtered by keywords.</p>
+        </article>
+        <article class="role">
+          <h3>Human in the loop</h3>
+          <p>Reads and local file edits run freely. Every Moodle write pauses for yes or no in the shell.</p>
+        </article>
+        <article class="role">
+          <h3>Hooks</h3>
+          <p>Lifecycle callbacks around a turn and each tool call. Used to log start, tool name, and end of an invocation.</p>
+        </article>
+        <article class="role">
+          <h3>Session manager</h3>
+          <p>Stores the conversation on disk by session id, so a later shell can continue the same thread.</p>
+        </article>
+        <article class="role">
+          <h3>Conversation manager</h3>
+          <p>Keeps a sliding window of recent messages so the context stays bounded as the chat grows.</p>
+        </article>
+        <article class="role">
+          <h3>Skills</h3>
+          <p>Short playbooks (inspect, author, revise, templates, workspace, sync) the agent can load when the task matches.</p>
+        </article>
+        <article class="role wide">
+          <h3>MCP</h3>
+          <p>One server with the same Moodle API, workspace, and sync tools. Other clients can call them over stdio; writes still need approval.</p>
+        </article>
+      </div>
+    </section>
+  </div>
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose" });
+  </script>
+</body>
+</html>
