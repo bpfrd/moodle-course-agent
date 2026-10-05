@@ -54,11 +54,17 @@ Local file edits do not need approval. Moodle writes do.
 
 ## MCP
 
-`moodle-agent mcp` registers every public Moodle client method (get/create/update/move/copy) plus workspace and sync. Write tools require `approved=true`. After a Moodle write, local files are updated.
+`moodle-agent mcp` registers every public Moodle client method (get/create/update/move/copy) plus workspace and sync. Before any Moodle write, the server asks the teacher directly through MCP elicitation, so the calling model cannot approve its own change. Clients without elicitation support must pass `approved=true`; write tools are annotated `destructiveHint` so hosts can show their own permission prompt. After a Moodle write, Moodle-side changes are pulled into local files.
 
 ## Guardrail
 
 Each user turn is classified by a small LLM call (not keyword filters, so course material about history or conflict is not blocked). Off-topic requests, sexual content, hate speech, and real-world violence are refused with: `Sorry, I can not help with this.`
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `GUARDRAIL_ENABLED` | `1` | Turn the classifier off with `0` |
+| `GUARDRAIL_MODEL` | chat model | Cheaper classifier model on the same provider, e.g. `gpt-4o-mini` |
+| `GUARDRAIL_FAIL_OPEN` | `0` | If the classifier errors, the turn is refused; `1` allows it instead |
 
 ## Observability
 
@@ -94,4 +100,5 @@ The wrapped plugin does not support deleting modules/sections, file uploads, qui
 
 ## License
 
-MIT
+- Code: [MIT](LICENSE)
+- Documentation, skills, and slides (`docs/`, `skills/`, `slides/`, README): [CC BY 4.0](LICENSE-CC-BY-4.0)
