@@ -100,5 +100,4 @@ The wrapped plugin does not support deleting modules/sections, file uploads, qui
 
 ## License
 
-- Code: [MIT](LICENSE)
-- Documentation, skills, and slides (`docs/`, `skills/`, `slides/`, README): [CC BY 4.0](LICENSE-CC-BY-4.0)
+© 2026 Behnam Parsaeifard. Licensed under [Creative Commons Attribution 4.0 International (CC BY 4.0)](LICENSE).
