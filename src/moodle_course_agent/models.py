@@ -44,6 +44,8 @@ class ModuleSnapshot(BaseModel):
     section_name: str = ""
     position: int = 0
     fields: dict[str, Any] = Field(default_factory=dict)
+    # Local-only creation hint (assignments): which Moodle template to copy. Not hashed.
+    template: str | None = None
     content_hash: str = ""
     source: Literal["moodle", "workspace"] = "moodle"
 

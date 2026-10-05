@@ -162,6 +162,7 @@ def parse_module_file(relative: str, text: str, sectionnum: int | None, section_
         sectionnum=sectionnum,
         section_name=section_name,
         fields=fields,
+        template=str(meta["template"]) if meta.get("template") is not None else None,
         source="workspace",
     )
     snapshot.content_hash = content_hash(

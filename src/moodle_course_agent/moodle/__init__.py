@@ -17,7 +17,8 @@ __all__ = [
     "iter_moodle_methods",
 ]
 
-_SKIP = {"call", "dump", "close", "course"}
+# delete_module is unimplemented in the Moodle plugin and must never be offered as a tool.
+_SKIP = {"call", "dump", "close", "course", "delete_module"}
 _WRITE_PREFIXES = ("create_", "update_", "move_", "copy_", "delete_")
 
 _DOCS: dict[str, str] = {
@@ -42,7 +43,6 @@ _DOCS: dict[str, str] = {
     "update_assign": "Update an assignment.",
     "move_module": "Move a module. beforemod=0 appends.",
     "copy_module": "Duplicate a module. beforemod=0 appends.",
-    "delete_module": "Delete a module if the Moodle plugin supports it.",
 }
 
 

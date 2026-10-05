@@ -94,6 +94,7 @@ Do not explain.
 """
 
 REFUSAL = "Sorry, I can not help with this."
+GUARDRAIL_UNAVAILABLE = "Sorry, the safety check is unavailable right now. Please try again."
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +167,9 @@ class LlmGuardrail(InterventionHandler):
 
     name = "llm-guardrail"
 
-    def __init__(self, model: Any | None = None) -> None:
+    def __init__(self, model: Any | None = None, *, fail_open: bool = False) -> None:
         self.model = model
+        self.fail_open = fail_open
 
     def before_invocation(self, event: Any, **kwargs: Any) -> Any:
         if Deny is None:
@@ -180,8 +182,11 @@ class LlmGuardrail(InterventionHandler):
         try:
             verdict = classify_with_llm(self.model, text)
         except Exception:
-            logger.exception("guardrail classifier failed; allowing the turn")
-            return Proceed()
+            if self.fail_open:
+                logger.exception("guardrail classifier failed; allowing the turn (GUARDRAIL_FAIL_OPEN)")
+                return Proceed()
+            logger.exception("guardrail classifier failed; refusing the turn")
+            return Deny(reason=GUARDRAIL_UNAVAILABLE)
         if verdict == "DENY":
             return Deny(reason=REFUSAL)
         return Proceed()
@@ -215,7 +220,7 @@ class LifecycleHook:
         logger.info("tool name=%s", name)
 
 
-def _openai_model(settings) -> Any:
+def _openai_model(settings, model_id: str | None = None) -> Any:
     from strands.models.openai import OpenAIModel
 
     settings.export_runtime_env()
@@ -224,21 +229,30 @@ def _openai_model(settings) -> Any:
         client_args["api_key"] = settings.openai_api_key
     if settings.openai_base_url:
         client_args["base_url"] = settings.openai_base_url
-    return OpenAIModel(client_args=client_args or None, model_id=settings.openai_model)
+    return OpenAIModel(client_args=client_args or None, model_id=model_id or settings.openai_model)
 
 
-def _bedrock_model(settings) -> Any:
+def _bedrock_model(settings, model_id: str | None = None) -> Any:
     from strands.models.bedrock import BedrockModel
 
     settings.export_runtime_env()
-    kwargs: dict[str, Any] = {"model_id": settings.bedrock_model}
+    kwargs: dict[str, Any] = {"model_id": model_id or settings.bedrock_model}
     if settings.aws_region:
         kwargs["region_name"] = settings.aws_region
     return BedrockModel(**kwargs)
 
 
-def build_model(settings) -> Any:
-    return _bedrock_model(settings) if settings.uses_bedrock else _openai_model(settings)
+def build_model(settings, model_id: str | None = None) -> Any:
+    if settings.uses_bedrock:
+        return _bedrock_model(settings, model_id)
+    return _openai_model(settings, model_id)
+
+
+def build_guardrail_model(settings, chat_model: Any) -> Any:
+    """GUARDRAIL_MODEL (same provider) when set, otherwise the chat model."""
+    if not settings.guardrail_model:
+        return chat_model
+    return build_model(settings, settings.guardrail_model)
 
 
 def _hitl(allowed_tools: list[str], ask=None) -> Any:
@@ -279,6 +293,16 @@ def _compact_context(app: CourseApplication) -> str:
     )
 
 
+def _interventions(app: CourseApplication, chat_model: Any, *, custom_model: bool, ask=None) -> list:
+    interventions = []
+    settings = app.settings
+    if settings.guardrail_enabled:
+        guard_model = chat_model if custom_model else build_guardrail_model(settings, chat_model)
+        interventions.append(LlmGuardrail(guard_model, fail_open=settings.guardrail_fail_open))
+    interventions.append(_hitl(hitl_allowlist(app.moodle), ask=ask))
+    return interventions
+
+
 def build_agent(
     app: CourseApplication,
     *,
@@ -313,10 +337,7 @@ def build_agent(
             pin_first=1,
         ),
         "hooks": [LifecycleHook(app)],
-        "interventions": [
-            LlmGuardrail(resolved_model),
-            _hitl(hitl_allowlist(app.moodle), ask=ask),
-        ],
+        "interventions": _interventions(app, resolved_model, custom_model=model is not None, ask=ask),
         "callback_handler": None,
     }
     if plugins:

@@ -76,3 +76,52 @@ def test_parser_defaults_and_commands():
     assert args.session == "abc"
     args = parser.parse_args(["mcp"])
     assert args.command == "mcp"
+
+
+def _event(text):
+    return type("Event", (), {"messages": [{"role": "user", "content": [{"text": text}]}]})()
+
+
+def test_guardrail_fails_closed_by_default(monkeypatch):
+    from strands.interventions import Deny, Proceed
+
+    from moodle_course_agent import agent as agent_module
+
+    def boom(model, text):
+        raise RuntimeError("classifier down")
+
+    monkeypatch.setattr(agent_module, "classify_with_llm", boom)
+    closed = agent_module.LlmGuardrail(object()).before_invocation(_event("Revise week 1"))
+    assert isinstance(closed, Deny)
+    assert closed.reason == agent_module.GUARDRAIL_UNAVAILABLE
+    opened = agent_module.LlmGuardrail(object(), fail_open=True).before_invocation(_event("Revise week 1"))
+    assert isinstance(opened, Proceed)
+
+
+def test_guardrail_denies_and_allows_by_verdict(monkeypatch):
+    from strands.interventions import Deny, Proceed
+
+    from moodle_course_agent import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "classify_with_llm", lambda model, text: "DENY" if "stocks" in text else "ALLOW")
+    guard = agent_module.LlmGuardrail(object())
+    assert isinstance(guard.before_invocation(_event("Which stocks to buy?")), Deny)
+    assert isinstance(guard.before_invocation(_event("Add a WWII reading to week 3")), Proceed)
+
+
+def test_guardrail_model_override(monkeypatch):
+    from moodle_course_agent.agent import build_guardrail_model
+
+    created = []
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            created.append(kwargs["model_id"])
+
+    monkeypatch.setattr("strands.models.openai.OpenAIModel", FakeOpenAI)
+    chat = object()
+    assert build_guardrail_model(Settings(openai_api_key="sk-test"), chat) is chat
+    build_guardrail_model(
+        Settings(model_provider="openai", openai_api_key="sk-test", guardrail_model="gpt-4o-mini"), chat
+    )
+    assert created == ["gpt-4o-mini"]

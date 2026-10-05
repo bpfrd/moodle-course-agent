@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     )
     conversation_window: int = Field(default=24, validation_alias="CONVERSATION_WINDOW")
 
+    guardrail_enabled: bool = Field(default=True, validation_alias="GUARDRAIL_ENABLED")
+    # Optional cheaper classifier model id (same provider); empty reuses the chat model.
+    guardrail_model: str = Field(default="", validation_alias="GUARDRAIL_MODEL")
+    guardrail_fail_open: bool = Field(default=False, validation_alias="GUARDRAIL_FAIL_OPEN")
+
     langfuse_public_key: str = Field(default="", validation_alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: str = Field(default="", validation_alias="LANGFUSE_SECRET_KEY")
     langfuse_base_url: str = Field(

@@ -154,24 +154,30 @@ def _create_assign_from_template(
 
     copied = client.copy_module(cmid=template_cmid, beforemod=insert_before)
     new_cmid = copied["cmid"]
-    updated = client.update_assign(
-        cmid=new_cmid,
-        name=name,
-        intro=intro,
-        activity=activity,
-        allowsubmissionsfromdate=allowsubmissionsfromdate,
-        duedate=duedate,
-        cutoffdate=cutoffdate,
-        gradingduedate=gradingduedate,
-        timelimit=timelimit,
-        submissionattachments=submissionattachments,
-        maxattempts=maxattempts,
-        grade=grade,
-        visible=visible,
-        visibleoncoursepage=visibleoncoursepage,
-        showdescription=showdescription,
-        zeitaufwand=zeitaufwand,
-    )
+    try:
+        updated = client.update_assign(
+            cmid=new_cmid,
+            name=name,
+            intro=intro,
+            activity=activity,
+            allowsubmissionsfromdate=allowsubmissionsfromdate,
+            duedate=duedate,
+            cutoffdate=cutoffdate,
+            gradingduedate=gradingduedate,
+            timelimit=timelimit,
+            submissionattachments=submissionattachments,
+            maxattempts=maxattempts,
+            grade=grade,
+            visible=visible,
+            visibleoncoursepage=visibleoncoursepage,
+            showdescription=showdescription,
+            zeitaufwand=zeitaufwand,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Copied template {template_key} to new cmid {new_cmid}, but updating the copy failed: "
+            f"{exc}. The copy is still on Moodle; update it with update_assign instead of creating another."
+        ) from exc
     return {
         "template": template_key,
         "template_cmid": template_cmid,

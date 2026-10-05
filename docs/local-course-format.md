@@ -66,7 +66,12 @@ Short intro shown on the course page when showdescription is enabled.
 Full page body. Markdown is converted to HTML when pushing to Moodle.
 ```
 
-Assignments split intro and activity with `<!-- moodle:activity -->`. URL modules
+Assignments split intro and activity with `<!-- moodle:activity -->`. A new
+assignment is created by copying a template: `template: ohne_abgabe` (default),
+`template: mit_abgabe`, or `template: none` to create it from scratch. Without
+template assignments in the course, or when the target section is still empty,
+it is created from scratch. `template` only matters when the assignment is first
+created. URL modules
 use `externalurl`. Forums use `forum_type` (default `general`).
 
 `moodle_cmid` is the stable link to the remote module. After creating content on
@@ -77,9 +82,14 @@ duplicate.
 
 - Comparison and conflict detection are deterministic (content hashes). The LLM
   does not decide what changed.
+- The last-synced hashes record which side changed. A change made only on Moodle
+  is pulled, a change made only locally is pushed; neither direction reverts the
+  other side's one-sided change.
 - `to_moodle` creates/updates Moodle from local files. It never deletes Moodle
   modules (the webservice does not implement deletion).
-- `to_local` writes or updates local files from Moodle.
+- `to_local` writes or updates local files from Moodle. Unpushed local edits are kept.
+- After every approved Moodle write, Moodle-side changes are pulled automatically.
+  Local edits that are not pushed yet, and conflicts, are left untouched.
 - A **conflict** means both sides changed since the last successful sync. Those
   actions are shown and skipped unless the teacher resolves them.
 - Every Moodle mutation still requires explicit human approval.

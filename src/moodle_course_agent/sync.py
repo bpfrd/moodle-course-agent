@@ -25,6 +25,7 @@ from moodle_course_agent.moodle.client import MoodleClient
 from moodle_course_agent.moodle.templates import (
     create_aufgabe_mit_abgabe,
     create_aufgabe_ohne_abgabe,
+    get_assign_templates,
 )
 from moodle_course_agent.workspace import (
     build_workspace_snapshot,
@@ -38,6 +39,13 @@ from moodle_course_agent.workspace import (
 from moodle_course_agent.workspace.sandbox import WorkspaceSandbox
 
 SUPPORTED = {"label", "page", "url", "forum", "assign"}
+ASSIGN_TEMPLATES = {"ohne_abgabe", "mit_abgabe"}
+_CONFLICT_REASON = "Both Moodle and local changed since last sync"
+
+
+def _int(value: Any, default: int) -> int:
+    """``int(value)``, using ``default`` only when the value is missing (0 stays 0)."""
+    return default if value is None or value == "" else int(value)
 
 
 def _norm(value: str | None) -> str:
@@ -195,29 +203,24 @@ def build_sync_plan(
         assert remote_section and local_section
         if remote_section.content_hash != local_section.content_hash:
             rec = record.items.get(f"section:{remote_section.sectionnum}")
-            conflict = _is_conflict(
-                rec,
-                remote_section.content_hash,
-                local_section.content_hash,
-            )
-            kind = ChangeKind.CONFLICT if conflict else ChangeKind.UPDATE_ON_MOODLE
+            side = _changed_side(rec, remote_section.content_hash, local_section.content_hash)
+            kind = _diff_kind(side, direction)
             actions.append(
                 _action(
-                    kind=kind if direction != "to_local" else (
-                        ChangeKind.CONFLICT if conflict else ChangeKind.UPDATE_LOCAL
-                    ),
+                    kind=kind,
                     entity="section",
                     summary=(
                         f"Section {local_section.name!r} differs between Moodle and local"
-                        + (" (conflict)" if conflict else "")
+                        + (" (conflict)" if kind == ChangeKind.CONFLICT else "")
                     ),
                     local_path=local_section.local_id,
                     moodle_id=remote_section.sectionnum,
                     sectionnum=remote_section.sectionnum,
                     name=local_section.name,
-                    mutates_moodle=kind != ChangeKind.CONFLICT and direction != "to_local",
-                    conflict_reason="Both Moodle and local changed since last sync" if conflict else None,
+                    mutates_moodle=kind == ChangeKind.UPDATE_ON_MOODLE,
+                    conflict_reason=_CONFLICT_REASON if kind == ChangeKind.CONFLICT else None,
                     details={
+                        "changed_side": side,
                         "moodle_hash": remote_section.content_hash,
                         "local_hash": local_section.content_hash,
                         "moodle_name": remote_section.name,
@@ -269,29 +272,25 @@ def build_sync_plan(
                 rec = record.items.get(_module_key(remote_mod)) or record.items.get(
                     f"local:{local_mod.local_id}"
                 )
-                conflict = _is_conflict(rec, remote_mod.content_hash, local_mod.content_hash)
-                if direction == "to_local":
-                    kind = ChangeKind.CONFLICT if conflict else ChangeKind.UPDATE_LOCAL
-                    mutates = False
-                else:
-                    kind = ChangeKind.CONFLICT if conflict else ChangeKind.UPDATE_ON_MOODLE
-                    mutates = not conflict
+                side = _changed_side(rec, remote_mod.content_hash, local_mod.content_hash)
+                kind = _diff_kind(side, direction)
                 actions.append(
                     _action(
                         kind=kind,
                         entity="module",
                         summary=(
                             f"{local_mod.modname} {local_mod.name!r} differs"
-                            + (" (conflict)" if conflict else "")
+                            + (" (conflict)" if kind == ChangeKind.CONFLICT else "")
                         ),
                         local_path=local_mod.local_id,
                         moodle_id=remote_mod.cmid,
                         sectionnum=remote_mod.sectionnum,
                         modname=local_mod.modname,
                         name=local_mod.name,
-                        mutates_moodle=mutates,
-                        conflict_reason="Both sides changed since last sync" if conflict else None,
+                        mutates_moodle=kind == ChangeKind.UPDATE_ON_MOODLE,
+                        conflict_reason=_CONFLICT_REASON if kind == ChangeKind.CONFLICT else None,
                         details={
+                            "changed_side": side,
                             "moodle_hash": remote_mod.content_hash,
                             "local_hash": local_mod.content_hash,
                             "local_module": local_mod.model_dump(mode="json"),
@@ -314,16 +313,34 @@ def build_sync_plan(
     )
 
 
-def _is_conflict(
-    rec: dict[str, str] | None, moodle_hash: str, local_hash: str
-) -> bool:
-    if not rec:
-        return False
-    last_moodle = rec.get("moodle_hash")
-    last_local = rec.get("local_hash")
-    if not last_moodle or not last_local:
-        return False
-    return moodle_hash != last_moodle and local_hash != last_local and moodle_hash != local_hash
+def _changed_side(rec: dict[str, str] | None, moodle_hash: str, local_hash: str) -> str:
+    """Which side moved since the last sync: ``moodle``, ``local``, ``both``, or ``unknown``.
+
+    Only called for pairs whose hashes differ. ``unknown`` means there is no
+    usable baseline, so only an explicit sync direction can resolve it.
+    """
+    if not rec or not rec.get("moodle_hash") or not rec.get("local_hash"):
+        return "unknown"
+    moodle_changed = moodle_hash != rec["moodle_hash"]
+    local_changed = local_hash != rec["local_hash"]
+    if moodle_changed and local_changed:
+        return "both"
+    if moodle_changed:
+        return "moodle"
+    if local_changed:
+        return "local"
+    return "unknown"
+
+
+def _diff_kind(side: str, direction: str) -> ChangeKind:
+    """Carry each one-sided change toward the side that did not change."""
+    if side == "both":
+        return ChangeKind.CONFLICT
+    if side == "moodle":
+        return ChangeKind.UPDATE_LOCAL
+    if side == "local":
+        return ChangeKind.UPDATE_ON_MOODLE
+    return ChangeKind.UPDATE_LOCAL if direction == "to_local" else ChangeKind.UPDATE_ON_MOODLE
 
 
 def _filter_direction(actions: list[SyncAction], direction: str) -> list[SyncAction]:
@@ -364,31 +381,53 @@ def _filter_direction(actions: list[SyncAction], direction: str) -> list[SyncAct
     return actions
 
 
-def record_from_snapshots(moodle: CourseSnapshot, workspace: CourseSnapshot) -> SyncRecord:
+def action_record_keys(action: SyncAction) -> set[str]:
+    """Sync-record keys that an action refers to."""
+    if action.entity == "section":
+        return {f"section:{action.moodle_id}"} if action.moodle_id is not None else set()
+    keys = set()
+    if action.moodle_id is not None:
+        keys.add(f"cmid:{action.moodle_id}")
+    if action.local_path:
+        keys.add(f"local:{action.local_path}")
+    return keys
+
+
+def record_from_snapshots(
+    moodle: CourseSnapshot,
+    workspace: CourseSnapshot,
+    previous: SyncRecord | None = None,
+    *,
+    synced: set[str] | frozenset[str] = frozenset(),
+) -> SyncRecord:
+    """Record baseline hashes for matched pairs.
+
+    Without ``previous`` every matched pair becomes the baseline. Otherwise a pair
+    gets a fresh baseline only if both sides match or it was just ``synced``;
+    pairs that still differ keep their previous entry so pending one-sided
+    edits and conflicts are still detected on the next sync.
+    """
+    old = previous.items if previous else {}
     items: dict[str, dict[str, str]] = {}
-    plan = build_sync_plan(moodle, workspace, SyncRecord(updated_at=utcnow(), items={}))
-    matched = {
-        (a.moodle_id, a.local_path)
-        for a in plan.actions
-        if a.kind in {ChangeKind.UPDATE_ON_MOODLE, ChangeKind.UPDATE_LOCAL, ChangeKind.CONFLICT}
-    }
-    # Record hashes for currently matched pairs by walking both snapshots
+
+    def put(keys: list[str], moodle_hash: str, local_hash: str, local_path: str) -> None:
+        if previous is not None and moodle_hash != local_hash and not synced.intersection(keys):
+            prior = next((old[k] for k in keys if k in old), None)
+            if prior:
+                for key in keys:
+                    items[key] = prior
+            return
+        entry = {"moodle_hash": moodle_hash, "local_hash": local_hash, "local_path": local_path}
+        for key in keys:
+            items[key] = entry
+
     for remote, local in _match_sections(moodle, workspace):
-        if remote and local:
-            items[f"section:{remote.sectionnum}"] = {
-                "moodle_hash": remote.content_hash,
-                "local_hash": local.content_hash,
-                "local_path": local.local_id,
-            }
-            for rm, lm in _match_modules(remote, local):
-                if rm and lm:
-                    items[_module_key(rm)] = {
-                        "moodle_hash": rm.content_hash,
-                        "local_hash": lm.content_hash,
-                        "local_path": lm.local_id,
-                    }
-                    items[f"local:{lm.local_id}"] = items[_module_key(rm)]
-    _ = matched
+        if not (remote and local):
+            continue
+        put([f"section:{remote.sectionnum}"], remote.content_hash, local.content_hash, local.local_id)
+        for rm, lm in _match_modules(remote, local):
+            if rm and lm:
+                put([_module_key(rm), f"local:{lm.local_id}"], rm.content_hash, lm.content_hash, lm.local_id)
     return SyncRecord(updated_at=utcnow(), items=items)
 
 
@@ -521,7 +560,7 @@ def _apply_one_moodle(
             name=action.name or "Untitled",
             summary=str(details.get("summary") or ""),
             position=position,
-            visible=int(details.get("visible") or 1),
+            visible=_int(details.get("visible"), 1),
         )
         sectionnum = created.get("sectionnum")
         if action.local_path and sectionnum is not None:
@@ -534,7 +573,7 @@ def _apply_one_moodle(
             sectionnum=int(action.moodle_id or action.sectionnum or 0),
             name=str(details.get("local_name") or action.name or ""),
             summary=str(details.get("local_summary") or ""),
-            visible=int(details.get("local_visible") or 1),
+            visible=_int(details.get("local_visible"), 1),
         )
         return {"updated": "section"}
 
@@ -606,28 +645,28 @@ def _create_module(
             **common,
         )
     if module.modname == "assign":
-        # Prefer templates when a template section exists
-        if template_section_name:
-            try:
-                return create_aufgabe_ohne_abgabe(
-                    client,
-                    name=module.name,
-                    intro=str(fields.get("intro") or ""),
-                    activity=str(fields.get("activity") or ""),
-                    sectionnum=sectionnum,
-                    duedate=int(fields.get("duedate") or 0),
-                    cutoffdate=int(fields.get("cutoffdate") or 0),
-                    allowsubmissionsfromdate=int(fields.get("allowsubmissionsfromdate") or 0),
-                    grade=int(fields.get("grade") or 100),
-                    maxattempts=int(fields.get("maxattempts") or 1),
-                    visible=module.visible,
-                    visibleoncoursepage=module.visibleoncoursepage,
-                    showdescription=int(fields.get("showdescription") or 0),
-                    zeitaufwand=fields.get("zeitaufwand"),
-                    template_section_name=template_section_name,
-                )
-            except Exception:
-                pass
+        template_key = _assign_template_key(module)
+        if template_key and _can_copy_template_into(client, sectionnum, template_section_name):
+            # Errors after this point propagate: falling back to create_assign
+            # would duplicate the assignment if the template copy already exists.
+            create = create_aufgabe_mit_abgabe if template_key == "mit_abgabe" else create_aufgabe_ohne_abgabe
+            return create(
+                client,
+                name=module.name,
+                intro=str(fields.get("intro") or ""),
+                activity=str(fields.get("activity") or ""),
+                sectionnum=sectionnum,
+                duedate=int(fields.get("duedate") or 0),
+                cutoffdate=int(fields.get("cutoffdate") or 0),
+                allowsubmissionsfromdate=int(fields.get("allowsubmissionsfromdate") or 0),
+                grade=_int(fields.get("grade"), 100),
+                maxattempts=_int(fields.get("maxattempts"), 1),
+                visible=module.visible,
+                visibleoncoursepage=module.visibleoncoursepage,
+                showdescription=int(fields.get("showdescription") or 0),
+                zeitaufwand=fields.get("zeitaufwand"),
+                template_section_name=template_section_name,
+            )
         return client.create_assign(
             name=module.name,
             intro=str(fields.get("intro") or ""),
@@ -635,13 +674,40 @@ def _create_module(
             duedate=int(fields.get("duedate") or 0),
             cutoffdate=int(fields.get("cutoffdate") or 0),
             allowsubmissionsfromdate=int(fields.get("allowsubmissionsfromdate") or 0),
-            grade=int(fields.get("grade") or 100),
-            maxattempts=int(fields.get("maxattempts") or 1),
+            grade=_int(fields.get("grade"), 100),
+            maxattempts=_int(fields.get("maxattempts"), 1),
             zeitaufwand=fields.get("zeitaufwand"),
             showdescription=int(fields.get("showdescription") or 0),
             **common,
         )
     raise ValueError(f"Unsupported module type {module.modname}")
+
+
+def _assign_template_key(module: ModuleSnapshot) -> str | None:
+    """Template from frontmatter ``template``: ohne_abgabe (default), mit_abgabe, or none."""
+    value = (module.template or "ohne_abgabe").strip().lower()
+    if value == "none":
+        return None
+    if value not in ASSIGN_TEMPLATES:
+        raise ValueError(
+            f"Unknown assignment template {module.template!r} in {module.local_id}; "
+            "use ohne_abgabe, mit_abgabe, or none"
+        )
+    return value
+
+
+def _can_copy_template_into(client: MoodleClient, sectionnum: int, template_section_name: str | None) -> bool:
+    """Template copies are placed before an existing module, so the section must not be empty."""
+    if not template_section_name:
+        return False
+    section = next((s for s in client.course if s.get("section") == sectionnum), None)
+    if not section or not section.get("modules"):
+        return False
+    try:
+        get_assign_templates(client, template_section_name)
+    except ValueError:
+        return False
+    return True
 
 
 def _update_module(client: MoodleClient, module: ModuleSnapshot, cmid: int) -> None:
@@ -698,8 +764,8 @@ def _update_module(client: MoodleClient, module: ModuleSnapshot, cmid: int) -> N
             allowsubmissionsfromdate=int(fields.get("allowsubmissionsfromdate") or 0),
             duedate=int(fields.get("duedate") or 0),
             cutoffdate=int(fields.get("cutoffdate") or 0),
-            grade=int(fields.get("grade") or 100),
-            maxattempts=int(fields.get("maxattempts") or 1),
+            grade=_int(fields.get("grade"), 100),
+            maxattempts=_int(fields.get("maxattempts"), 1),
             visible=module.visible,
             visibleoncoursepage=module.visibleoncoursepage,
             showdescription=int(fields.get("showdescription") or 0),

@@ -6,12 +6,18 @@ from typing import Any
 from uuid import uuid4
 
 from moodle_course_agent.config import Settings
-from moodle_course_agent.models import BootstrapSummary, CourseSnapshot, SyncPlan
+from moodle_course_agent.models import BootstrapSummary, ChangeKind, CourseSnapshot, SyncPlan, SyncRecord
 from moodle_course_agent.moodle.client import MoodleClient
 from moodle_course_agent.moodle.fakes import FakeMoodleClient
 from moodle_course_agent.moodle.snapshot import build_moodle_snapshot
 from moodle_course_agent.state import StateStore
-from moodle_course_agent.sync import apply_to_local, apply_to_moodle, build_sync_plan, record_from_snapshots
+from moodle_course_agent.sync import (
+    action_record_keys,
+    apply_to_local,
+    apply_to_moodle,
+    build_sync_plan,
+    record_from_snapshots,
+)
 from moodle_course_agent.workspace import build_workspace_snapshot, export_snapshot_to_workspace
 from moodle_course_agent.workspace.sandbox import WorkspaceSandbox
 
@@ -194,7 +200,11 @@ class CourseApplication:
                 to_apply,
                 template_section_name=self.settings.template_section_name,
             )
-            written = self.sync_workspace_from_moodle()
+            applied = {item["id"] for item in results if item.get("ok") is True}
+            pushed = {
+                key for a in to_apply.actions if a.id in applied for key in action_record_keys(a)
+            }
+            written = self.sync_workspace_from_moodle(synced=pushed)
             failed = [item for item in results if item.get("ok") is False]
             return {
                 "ok": not failed,
@@ -204,27 +214,55 @@ class CourseApplication:
             }
 
         if direction == "to_local":
-            written = apply_to_local(self.workspace, self.moodle_snapshot or self.refresh_moodle_snapshot(), plan)
-            workspace = self.refresh_workspace_snapshot()
+            previous = self.store.load_sync_record()
             moodle = self.moodle_snapshot or self.refresh_moodle_snapshot()
-            self.store.save_sync_record(record_from_snapshots(moodle, workspace))
+            written = apply_to_local(self.workspace, moodle, plan)
+            workspace = self.refresh_workspace_snapshot()
+            pulled = {
+                key
+                for a in plan.actions
+                if a.kind != ChangeKind.CONFLICT
+                for key in action_record_keys(a)
+            }
+            self.store.save_sync_record(
+                record_from_snapshots(moodle, workspace, previous, synced=pulled)
+            )
             return {"ok": True, "written": written, "plan": plan.model_dump(mode="json")}
 
         return {"ok": False, "error": f"Unknown direction {direction}"}
 
-    def sync_workspace_from_moodle(self) -> list[str]:
-        """Write the current Moodle snapshot into local files. Skips conflicts."""
+    def sync_workspace_from_moodle(self, *, synced: set[str] = frozenset()) -> list[str]:
+        """Pull Moodle-side changes into local files without discarding local work.
+
+        Pulls modules/sections that are new on Moodle, changed only on Moodle, or
+        were just pushed (``synced`` record keys), so Moodle's normalized form
+        lands locally. Unpushed local edits, conflicts, and pairs with no sync
+        baseline are left alone and keep their previous baseline.
+        """
         moodle = self.refresh_moodle_snapshot()
         workspace = self.refresh_workspace_snapshot()
-        plan = build_sync_plan(
-            moodle, workspace, self.store.load_sync_record(), direction="to_local"
+        previous = self.store.load_sync_record()
+        # Dropping the baseline of just-pushed pairs makes them pullable below.
+        basis = SyncRecord(
+            updated_at=previous.updated_at,
+            items={k: v for k, v in previous.items.items() if k not in synced},
         )
-        plan = plan.model_copy(
-            update={"actions": [a for a in plan.actions if a.kind.value != "conflict"]}
-        )
-        written = apply_to_local(self.workspace, moodle, plan)
+        plan = build_sync_plan(moodle, workspace, basis, direction="to_local")
+        pull = [
+            a
+            for a in plan.actions
+            if a.kind == ChangeKind.CREATE_LOCAL
+            or (
+                a.kind == ChangeKind.UPDATE_LOCAL
+                and (a.details.get("changed_side") == "moodle" or action_record_keys(a) & synced)
+            )
+        ]
+        written = apply_to_local(self.workspace, moodle, plan.model_copy(update={"actions": pull}))
         workspace = self.refresh_workspace_snapshot()
-        self.store.save_sync_record(record_from_snapshots(moodle, workspace))
+        pulled = set(synced).union(*(action_record_keys(a) for a in pull))
+        self.store.save_sync_record(
+            record_from_snapshots(moodle, workspace, previous, synced=pulled)
+        )
         return written
 
     def after_moodle_write(self) -> list[str]:
