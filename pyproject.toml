@@ -8,7 +8,7 @@ version = "0.3.0"
 description = "Shell-first Moodle course agent: local Markdown workspace, HITL sync, MCP"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "CC-BY-4.0" }
+license = { text = "MIT" }
 authors = [{ name = "Behnam Parsaeifard" }]
 dependencies = [
   "requests>=2.31.0",

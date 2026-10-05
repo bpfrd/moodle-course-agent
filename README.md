@@ -100,4 +100,4 @@ The wrapped plugin does not support deleting modules/sections, file uploads, qui
 
 ## License
 
-© 2026 Behnam Parsaeifard. Licensed under [Creative Commons Attribution 4.0 International (CC BY 4.0)](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
